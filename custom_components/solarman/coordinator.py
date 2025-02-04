@@ -28,7 +28,7 @@ class InverterCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_setup(self) -> None:
         try:
-            await self.inverter.load()
+            return await self.inverter.load()
         except Exception as e:
             if isinstance(e, TimeoutError):
                 raise
