@@ -70,7 +70,8 @@ class SolarmanCoordinatorEntity(CoordinatorEntity[Coordinator]):
 
     @property
     def available(self) -> bool:
-        return self.coordinator.last_update_success and self.coordinator.device.state.value > -1
+        return True
+        #return self.coordinator.last_update_success and self.coordinator.device.state.value > -1
 
     @callback
     def _handle_coordinator_update(self) -> None:
