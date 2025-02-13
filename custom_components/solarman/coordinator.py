@@ -17,6 +17,7 @@ class Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         super().__init__(hass, _LOGGER, name = device.config.name, update_interval = TIMINGS_UPDATE_INTERVAL, always_update = False)
         self.device = device
         self._counter = 0
+        self._is_offline_logged = False
 
     async def _async_setup(self) -> None:
         try:
@@ -35,9 +36,10 @@ class Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception as e:
             self._counter = 0
 
-            if self.last_update_success:
+            if self.last_update_success and not self._is_offline_logged:
                 _LOGGER.warning("Error retrieving data. Use last known data.")
-
+                self._is_offline_logged = True
+ 
             if self.data is not None:
                 return self.data
 
