@@ -33,6 +33,7 @@ class Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return await self.device.get(int(self._counter * self._update_interval_seconds))
             finally:
                 self._counter += 1
+                self._is_offline_logged = False
         except Exception as e:
             self._counter = 0
 
