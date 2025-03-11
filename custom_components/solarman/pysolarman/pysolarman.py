@@ -282,14 +282,21 @@ class Solarman:
                 kwargs["registers"] = [kwargs["registers"]]
             elif "bits" in kwargs and not isinstance(kwargs["bits"], list):
                 kwargs["bits"] = [kwargs["bits"]]
-            _, pdu = self._client_framer.processIncomingFrame(await self._get_response(self._server_framer.buildFrame(self._server_decoder.lookup.get(code)(dev_id = self.slave, transaction_id = randint(0, 65535), **kwargs))))
+            response = await self._get_response(self._server_framer.buildFrame(self._server_decoder.lookup.get(code)(dev_id = self.slave, transaction_id = randint(0, 65535), **kwargs)))
+            if response[0] != self.slave and response[1] != code:
+                raise FrameError(f"Fragmented modbus response received")
+            _, pdu = self._client_framer.processIncomingFrame(response)
             if pdu is None:
                 raise FrameError(f"Invalid modbus response received")
             if pdu.function_code != code:
                 raise FrameError(f"Incorrect response w/ function code {pdu.function_code} instead of {code} received")
             if FUNCTION_CODE.READ_HOLDING_REGISTERS <= code <= FUNCTION_CODE.READ_INPUT_REGISTERS:
+                if len(pdu.registers) < kwargs["count"]:
+                    raise FrameError(f"Incomplete modbus response received")
                 return pdu.registers
             if FUNCTION_CODE.READ_COILS <= code <= FUNCTION_CODE.READ_DISCRETE_INPUTS:
+                if len(pdu.bits) < kwargs["count"]:
+                    raise FrameError(f"Incomplete modbus response received")
                 return pdu.bits
             return pdu.count
         raise Exception("[%s] Used invalid modbus function code %d", self.serial, code)
