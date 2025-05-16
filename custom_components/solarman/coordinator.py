@@ -47,6 +47,13 @@ class Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             return await self.device.get(next(self._counter))
         except Exception as e:
             self._counter = count(0, int(self._update_interval_seconds))
+
+            if self.last_update_success:
+                _LOGGER.warning("Error retrieving data. Use last known data.")
+
+            if self.data is not None:
+                return self.data
+
             if isinstance(e, TimeoutError):
                 raise
             raise UpdateFailed(e) from e
