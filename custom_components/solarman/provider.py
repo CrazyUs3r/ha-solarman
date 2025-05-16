@@ -9,7 +9,6 @@ from propcache import cached_property
 from collections.abc import Awaitable, Callable
 from ipaddress import IPv4Address, AddressValueError
 
-from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 
@@ -26,10 +25,6 @@ class ConfigurationProvider:
     config_entry: ConfigEntry
 
     @cached_property
-    def _data(self):
-        return self.config_entry.data
-
-    @cached_property
     def _options(self):
         return self.config_entry.options
 
@@ -39,19 +34,19 @@ class ConfigurationProvider:
 
     @cached_property
     def name(self):
-        return protected(self._data.get(CONF_NAME), "Configuration parameter [name] does not have a value")
-
-    @cached_property
-    def serial(self):
-        return protected(self._data.get(CONF_SERIAL, self._data.get(OLD_[CONF_SERIAL])), "Configuration parameter [serial] does not have a value")
+        return protected(self.config_entry.title, "Configuration parameter [title] does not have a value")
 
     @cached_property
     def host(self):
-        return self._options.get(CONF_HOST, IP_ANY)
+        return protected(self._options.get(CONF_HOST), "Configuration parameter [host] does not have a value")
 
     @cached_property
     def port(self):
         return self._options.get(CONF_PORT, DEFAULT_[CONF_PORT])
+
+    @cached_property
+    def transport(self):
+        return self._options.get(CONF_TRANSPORT, DEFAULT_[CONF_TRANSPORT])
 
     @cached_property
     def filename(self):
@@ -69,6 +64,7 @@ class ConfigurationProvider:
 class EndPointProvider:
     config: ConfigurationProvider
     mac: str = ""
+    serial: int = 0
 
     def __getattr__(self, attr: str) -> Any:
         return getattr(self.config, attr)
@@ -79,7 +75,7 @@ class EndPointProvider:
 
     @cached_property
     def connection(self):
-        return self.serial, self.address, self.port, self.mb_slave_id, TIMINGS_TIMEOUT
+        return self.address, self.port, self.transport, self.serial, self.mb_slave_id, TIMINGS_TIMEOUT
 
     @cached_property
     def ipaddress(self):
@@ -89,12 +85,11 @@ class EndPointProvider:
             return IPv4Address(socket.gethostbyname(self.host))    
 
     async def discover(self, ping_only = False):
-        if self.ipaddress.is_private and (discover := await Discovery(self.hass, self.address, self.serial).discover(ping_only)):
-            if (device := discover.get(self.serial)) is not None:
+        if self.ipaddress.is_private and (discover := await Discovery(self.hass, self.address).discover(ping_only)):
+            if (device := discover.get((s := next(iter([k for k, v in discover.items() if v["ip"] == str(self.ipaddress)]), None)))) is not None:
                 self.host = device["ip"]
                 self.mac = device["mac"]
-            elif (device := discover.get((s := next(iter([k for k, v in discover.items() if v["ip"] == self.host]), None)))):
-                raise vol.Invalid(f"Host {self.host} has serial number {s} but is configured with {self.serial}.")
+                self.serial = s
         return self
 
 @dataclass
@@ -102,6 +97,7 @@ class ProfileProvider:
     config: ConfigurationProvider
     endpoint: EndPointProvider
     parser: ParameterParser = None
+    info: dict[str, str] = None
 
     def __getattr__(self, attr: str) -> Any:
         return getattr(self.config, attr)
@@ -118,5 +114,4 @@ class ProfileProvider:
         _LOGGER.debug(f"Device autodetection is {"enabled" if self.auto and request else f"disabled. Selected profile: {self.filename}"}")
         if (f := await lookup_profile(request, self.attributes) if self.auto and request else self.filename) and f != DEFAULT_[CONF_LOOKUP_FILE] and (n := process_profile(f)) and (p := await yaml_open(self.config.directory + n)):
             self.parser = ParameterParser(p, self.attributes)
-            return build_device_info(self.serial, self.endpoint.mac, self.endpoint.host, self.name, unwrap(p["info"], "model", self.attributes[ATTR_[CONF_MOD]]) if "info" in p else None, f)
-        raise Exception(f"Unable to resolve and process selected profile: {self.filename}")
+            self.info = (unwrap(p["info"], "model", self.attributes[ATTR_[CONF_MOD]]) if "info" in p else {}) | {"filename": f}

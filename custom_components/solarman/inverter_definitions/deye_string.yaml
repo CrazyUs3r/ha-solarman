@@ -119,6 +119,9 @@ parameters:
         scale: 0.1
         rule: 4
         registers: [0x0010, 0x0011]
+        validation:
+          min: 0
+          max: 50000
 
       - name: "Device MPPTs"
         attribute:
@@ -165,7 +168,7 @@ parameters:
         platform: switch
         update_interval: 30
         rule: 1
-        registers: [0x002b]
+        registers: [0x002B]
         value:
           on: 0x0001
           off: 0x0002
@@ -250,7 +253,6 @@ parameters:
         rule: 1
         digits: 3
         scale: 0.1
-        registers: [0x006D, 0x006E, 0x006F, 0x0070]
         sensors:
           - registers: [0x006D]
             multiply:
@@ -258,6 +260,10 @@ parameters:
           - registers: [0x006F]
             multiply:
               registers: [0x0070]
+        validation:
+          min: 0
+          max: 50000
+          invalidate_all:
         icon: "mdi:solar-power-variant"
 
       - name: PV1 Power
@@ -269,7 +275,6 @@ parameters:
         rule: 1
         digits: 3
         scale: 0.1
-        registers: [0x006D, 0x006E]
         sensors:
           - registers: [0x006D]
             multiply:
@@ -307,7 +312,6 @@ parameters:
         rule: 1
         digits: 3
         scale: 0.1
-        registers: [0x006F, 0x0070]
         sensors:
           - registers: [0x006F]
             multiply:
@@ -437,7 +441,6 @@ parameters:
         rule: 1
         digits: 1
         scale: 0.1
-        registers: [0x00D0, 0x003C, 0x00CD, 0x00C8]
         uint: enforce
         sensors:
           - registers: [0x00D0]
@@ -456,8 +459,6 @@ parameters:
         rule: 3
         digits: 1
         scale: 0.1
-        registers:
-          [0x00D1, 0x00D2, 0x003F, 0x0040, 0x00CE, 0x00CF, 0x00C9, 0x00CA]
         uint: enforce
         sensors:
           - registers: [0x00D1, 0x00D2]
@@ -601,7 +602,6 @@ parameters:
         rule: 1
         digits: 3
         scale: 0.1
-        registers: [0x006D, 0x006E, 0x006F, 0x0070, 0x0056, 0x0057]
         uint: enforce
         sensors:
           - registers: [0x006D]
@@ -620,6 +620,33 @@ parameters:
         rule: 3
         scale: 0.1
         registers: [0x0058, 0x0059]
+
+      - name: "DC Temperature"
+        hidden:
+        class: "temperature"
+        state_class: "measurement"
+        uom: "°C"
+        scale: 0.1
+        rule: 2
+        offset: 1000
+        registers: [0x005A]
+        icon: "mdi:thermometer"
+        range:
+          min: 0
+          max: 3000
+
+      - name: "Temperature"
+        class: "temperature"
+        state_class: "measurement"
+        uom: "°C"
+        scale: 0.1
+        rule: 2
+        offset: 1000
+        registers: [0x005B]
+        icon: "mdi:thermometer"
+        range:
+          min: 0
+          max: 3000
 
       - name: "Load Power"
         l: 1

@@ -48,8 +48,6 @@ class ParameterParser:
         if (items_codes := [get_code(i, "read", self._code) for i in self._items if "registers" in i]) and (is_single_code := all_same(items_codes)):
             self._is_single_code = is_single_code
             self._code = items_codes[0]
-        
-        _LOGGER.debug(f"Items: {self._items}")
 
         l = (lambda x, y: y - x > self._min_span) if self._min_span > -1 else (lambda x, y: False)
 
@@ -129,35 +127,29 @@ class ParameterParser:
 
                 # Check that the first register in the definition is within the register set in the raw data.
                 if get_start_addr(data, get_code(i, "read"), registers[0]) is not None:
-                    self.try_parse(data, i)
+                    try:
+                        match i["rule"]:
+                            case 1 | 3:
+                                self.try_parse_unsigned(data, i)
+                            case 2 | 4:
+                                self.try_parse_signed(data, i)
+                            case 5:
+                                self.try_parse_ascii(data, i)
+                            case 6:
+                                self.try_parse_bits(data, i)
+                            case 7:
+                                self.try_parse_version(data, i)
+                            case 8:
+                                self.try_parse_datetime(data, i)
+                            case 9:
+                                self.try_parse_time(data, i)
+                            case 10:
+                                self.try_parse_raw(data, i)
+                    except Exception as e:
+                        _LOGGER.error(f"ParameterParser.try_parse: data: {data}, definition: {i} [{format_exception(e)}]")
+                        raise
 
         return self._result
-
-    def try_parse(self, data, definition):
-        try:
-            self.try_parse_field(data, definition)
-        except Exception as e:
-            _LOGGER.error(f"ParameterParser.try_parse: data: {data}, definition: {definition} [{format_exception(e)}]")
-            raise
-
-    def try_parse_field(self, data, definition):
-        match definition["rule"]:
-            case 1 | 3:
-                self.try_parse_unsigned(data, definition)
-            case 2 | 4:
-                self.try_parse_signed(data, definition)
-            case 5:
-                self.try_parse_ascii(data, definition)
-            case 6:
-                self.try_parse_bits(data, definition)
-            case 7:
-                self.try_parse_version(data, definition)
-            case 8:
-                self.try_parse_datetime(data, definition)
-            case 9:
-                self.try_parse_time(data, definition)
-            case 10:
-                self.try_parse_raw(data, definition)
 
     def _read_registers(self, data, definition):
         code = get_code(definition, "read")
@@ -235,11 +227,6 @@ class ParameterParser:
             if (n := self._read_registers(data, s) if not "signed" in s else self._read_registers_signed(data, s)) is None:
                 return None
 
-            if (validation := s.get("validation")) is not None and not self.do_validate(s["registers"], n, validation):
-                if not "default" in validation:
-                    continue
-                n = validation["default"]
-
             if (m := s.get("multiply")) and (c := self._read_registers(data, m) if not "signed" in m else self._read_registers_signed(data, m)) is not None:
                 n *= c
 
@@ -255,6 +242,11 @@ class ParameterParser:
                         value /= n
                     case _:
                         value += n
+            
+            if (validation := s.get("validation")) is not None and not self.do_validate(s["registers"], n, validation):
+                if not "default" in validation:
+                    continue
+                n = validation["default"]
 
         return value
 

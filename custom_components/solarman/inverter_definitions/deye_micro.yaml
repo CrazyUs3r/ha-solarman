@@ -117,6 +117,9 @@ parameters:
         scale: 0.1
         rule: 4
         registers: [0x0010, 0x0011]
+        validation:
+          min: 0
+          max: 4000
 
       - name: "Device MPPTs"
         attribute:
@@ -224,6 +227,8 @@ parameters:
             value: "DC Bus UnderVoltage"
           - key: 0x10
             value: "DC Bus2 Uneven Voltage"
+          - key: 0x14
+            value: "???"
           - key: 0x20
             value: "DC A path OverCurrent"
           - key: 0x40
@@ -282,8 +287,6 @@ parameters:
         rule: 1
         digits: 3
         scale: 0.1
-        registers:
-          [0x006D, 0x006E, 0x006F, 0x0070, 0x0071, 0x0072, 0x0073, 0x0074]
         sensors:
           - registers: [0x006D]
             multiply:
@@ -297,6 +300,10 @@ parameters:
           - registers: [0x0073]
             multiply:
               registers: [0x0074]
+        validation:
+          min: 0
+          max: 4000
+          invalidate_all:
         icon: "mdi:solar-power-variant"
 
       - name: PV1 Power
@@ -308,7 +315,6 @@ parameters:
         rule: 1
         digits: 3
         scale: 0.1
-        registers: [0x006D, 0x006E]
         sensors:
           - registers: [0x006D]
             multiply:
@@ -346,7 +352,6 @@ parameters:
         rule: 1
         digits: 3
         scale: 0.1
-        registers: [0x006F, 0x0070]
         sensors:
           - registers: [0x006F]
             multiply:
@@ -384,7 +389,6 @@ parameters:
         rule: 1
         digits: 3
         scale: 0.1
-        registers: [0x0071, 0x0072]
         sensors:
           - registers: [0x0071]
             multiply:
@@ -422,7 +426,6 @@ parameters:
         rule: 1
         digits: 3
         scale: 0.1
-        registers: [0x0073, 0x0074]
         sensors:
           - registers: [0x0073]
             multiply:
@@ -801,19 +804,6 @@ parameters:
         rule: 1
         digits: 3
         scale: 0.1
-        registers:
-          [
-            0x006D,
-            0x006E,
-            0x006F,
-            0x0070,
-            0x0071,
-            0x0072,
-            0x0073,
-            0x0074,
-            0x0056,
-            0x0057,
-          ]
         uint: enforce
         sensors:
           - registers: [0x006D]
