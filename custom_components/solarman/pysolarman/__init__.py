@@ -19,6 +19,10 @@ from ..common import retry, throttle, create_task, format
 
 _LOGGER = getLogger(__name__)
 
+MAX_RETRIES = 4
+INITIAL_BACKOFF = 3  # seconds
+MAX_BACKOFF = 24     # seconds
+
 PROTOCOL = types.SimpleNamespace()
 PROTOCOL.CONTROL_CODE = types.SimpleNamespace()
 PROTOCOL.CONTROL_CODE.HANDSHAKE = 0x41
@@ -37,6 +41,9 @@ PROTOCOL.PLACEHOLDER3 = bytes.fromhex("00000000") # offset time
 PROTOCOL.PLACEHOLDER4 = bytes.fromhex("000000000000000000000000") # delivery|poweron|offset time
 PROTOCOL.START = bytes.fromhex("A5")
 PROTOCOL.END = bytes.fromhex("15")
+
+class FrameError(Exception):
+    """Frame Validation Error"""
 
 def log_call(prefix: str):
     def decorator(f):
@@ -57,9 +64,6 @@ def log_return(prefix: str):
         return wrapper
     return decorator
 
-class FrameError(Exception):
-    """Frame Validation Error"""
-
 class Solarman:
     def __init__(self, host: str, port: int | str, transport: str, serial: int, slave: int, timeout: int):
         self.host = host
@@ -76,6 +80,7 @@ class Solarman:
         self._data_queue = asyncio.Queue(maxsize = 1)
         self._data_event = Event()
         self._last_frame: bytes | None = None
+        self.relay_values = []
 
     @staticmethod
     def _get_response_code(code: int) -> int:
@@ -135,21 +140,45 @@ class Solarman:
     def _protocol_trailer(self, frame: bytes) -> bytearray:
         return bytearray(struct.pack("<B", self._calculate_checksum(frame[1:])) + PROTOCOL.END)
 
+    def _handle_alt_aa_frame(self, frame: bytes) -> None:
+        try:
+            if len(frame) < 5:
+                _LOGGER.warning(f"[{self.host}] Zu kurzer AA-Frame: {frame.hex(' ')}")
+                return
+            address = frame[1]
+            function_code = frame[2]
+            register = int.from_bytes(frame[3:5], "big")
+            data_bytes = frame[5:]
+            registers = [int.from_bytes(data_bytes[i:i+2], "big") for i in range(0, len(data_bytes), 2) if i + 2 <= len(data_bytes)]
+            self.relay_values = registers
+            _LOGGER.info(f"[{self.host}] AA-Telegramm → Device: {address}, Function: {function_code:#02x}, Start-Reg: {register:#04x}, Values: {registers}")
+        except Exception as e:
+            _LOGGER.warning(f"[{self.host}] Error processing AA frame: {e!r}")
+
     def _received_frame_is_valid(self, frame: bytes) -> bool:
-        if not frame.startswith(PROTOCOL.START):
-            _LOGGER.debug(f"[{self.host}] PROTOCOL_MISMATCH: {frame.hex(" ")}")
+        if frame.startswith(PROTOCOL.START):
+            if frame[5] != self._sequence_number:
+                if frame[4] == PROTOCOL.CONTROL_CODE.REQUEST and len(frame) > 6:
+                    f = int.from_bytes(frame[5:6], "big") == len(frame[6:])
+                    if len(frame) > 9:
+                        f &= int.from_bytes(frame[8:9], "big") == len(frame[9:])
+                    if f:
+                        _LOGGER.debug(f"[{self.host}] TCP_DETECTED: {frame.hex(' ')}")
+                        self.transport = "modbus_tcp"
+                        return True
+                _LOGGER.debug(f"[{self.host}] SEQ_MISMATCH: {frame.hex(' ')}")
+                return False
+            if not frame.endswith(PROTOCOL.END):
+                _LOGGER.debug(f"[{self.host}] PROTOCOL_MISMATCH: {frame.hex(' ')}")
+                return False
+            return True
+        elif frame.startswith(b"\xAA"):
+            _LOGGER.debug(f"[{self.host}] ALT_FRAME_DETECTED (AA): {frame.hex(' ')}")
+            self._handle_alt_aa_frame(frame)
             return False
-        if frame[5] != self._sequence_number:
-            if frame[4] == PROTOCOL.CONTROL_CODE.REQUEST and len(frame) > 6 and (f := int.from_bytes(frame[5:6], "big") == len(frame[6:])) and (int.from_bytes(frame[8:9], "big") == len(frame[9:]) if len(frame) > 9 else f):
-                _LOGGER.debug(f"[{self.host}] TCP_DETECTED: %s", self.host, frame.hex(" "))
-                self.transport = "modbus_tcp"
-                return True
-            _LOGGER.debug(f"[{self.host}] SEQ_MISMATCH: {frame.hex(" ")}")
+        else:
+            _LOGGER.debug(f"[{self.host}] PROTOCOL_MISMATCH: {frame.hex(' ')}")
             return False
-        if not frame.endswith(PROTOCOL.END):
-            _LOGGER.debug(f"[{self.host}] PROTOCOL_MISMATCH: {frame.hex(" ")}")
-            return False
-        return True
 
     def _received_frame_response(self, frame: bytes) -> tuple[bool, bytearray]:
         do_continue = True
@@ -187,58 +216,117 @@ class Solarman:
         return do_continue
 
     async def _keeper_loop(self) -> None:
-        while True:
-            try:
-                data = await self._reader.read(1024)
-            except ConnectionResetError:
-                _LOGGER.debug(f"[{self.host}] Connection is reset by the peer. Will try to restart the connection")
-                break
-            if data == b"":
-                _LOGGER.debug(f"[{self.host}] Connection closed. Will try to restart the connection")
-                break
-            if self._handle_frame is not None and not await self._handle_frame(data):
-                # Skip...
-                continue
-            if not self._data_event.is_set():
-                _LOGGER.debug(f"[{self.host}] Data received too late")
-                continue
-            if not self._data_queue.empty():
-                _ = self._data_queue.get_nowait()
-            self._data_queue.put_nowait(data)
-            self._data_event.clear()
-        self._keeper = create_task(self._open_connection())
+        try:
+            while True:
+                try:
+                    data = await self._reader.read(1024)
+                except (ConnectionError, ConnectionResetError, asyncio.IncompleteReadError, OSError) as e:
+                    _LOGGER.debug(f"[{self.host}] Read error: {e!r}. Will restart the connection.")
+                    break
+
+                if data == b"":
+                    _LOGGER.debug(f"[{self.host}] Empty response in keeper loop. Connection closed by the peer. Will restart the connection.")
+                    break
+
+                if self._handle_frame is not None:
+                    try:
+                        handled = await self._handle_frame(data)
+                        if not handled:
+                            continue  # Skip to next loop iteration
+                    except Exception as e:
+                        _LOGGER.warning(f"[{self.host}] Exception in frame handler: {e!r}")
+                        continue
+
+                if not self._data_event.is_set():
+                    _LOGGER.debug(f"[{self.host}] Late data received — skipping")
+                    continue
+
+                if not self._data_queue.empty():
+                    _ = self._data_queue.get_nowait()
+                self._data_queue.put_nowait(data)
+                self._data_event.clear()
+        finally:
+            await self._close()
+
+            # Reconnect — spawn a new connection+keeper if needed
+            _LOGGER.info(f"[{self.host}] Reconnecting after disconnect")
+            await asyncio.sleep(1)
+            await self._open_connection()  # let that one create a new keeper
 
     @throttle(0.2)
     async def _open_connection(self) -> None:
-        try:
-            self._reader, self._writer = await asyncio.wait_for(asyncio.open_connection(self.host, self.port), self.timeout)
-            self._keeper = create_task(self._keeper_loop())
-            if self._data_event.is_set():
-                _LOGGER.debug(f"[{self.host}] Successful reconnection! Data expected. Will retry the last request")
-                await self._write(self._last_frame)
-            else:
-                _LOGGER.debug(f"[{self.host}] Successful connection!")
-        except Exception as e:
-            if self._last_frame is None:
-                raise ConnectionError("Cannot open connection") from e
-            await self._open_connection()
+
+        retries = 0
+        backoff = INITIAL_BACKOFF
+
+        while retries < MAX_RETRIES:
+            try:
+                _LOGGER.debug(f"[{self.host}] Attempting connection (try {retries + 1}/{MAX_RETRIES})...")
+                self._reader, self._writer = await asyncio.wait_for(
+                    asyncio.open_connection(self.host, self.port),
+                    self.timeout
+                )
+                self._keeper = asyncio.create_task(self._keeper_loop())
+                if self._keeper:
+                    _LOGGER.debug(f"[{self.host}] Created a new connection keeper: {self._keeper.get_name()}")
+
+                if self._data_event.is_set():
+                    _LOGGER.debug(f"[{self.host}] Successful reconnection! Data expected. Retrying last request.")
+                    await self._write(self._last_frame)
+                else:
+                    _LOGGER.debug(f"[{self.host}] Connected successfully.")
+                return  # Success
+
+            except Exception as e:
+                _LOGGER.debug(f"[{self.host}] Connection attempt failed: {e!r}")
+
+                retries += 1
+                if retries >= MAX_RETRIES or self._last_frame is None:
+                    raise ConnectionError(f"[{self.host}] Cannot open connection after {retries} attempts.") from e
+
+                _LOGGER.debug(f"[{self.host}] Retrying in {backoff} seconds...")
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, MAX_BACKOFF)
+
+        # Extra safeguard (should not be reached)
+        raise ConnectionError(f"[{self.host}] Exhausted retries without success.")
 
     async def _close(self) -> None:
-        if self._writer:
+        if self._writer is not None:
             try:
+                # Trigger write machinery and possible errors without sending actual data
                 await self._write(b"")
             except (ConnectionError, TimeoutError) as e:
-                _LOGGER.debug(f"[{self.host}] {e!r} can be during closing ignored")
-
+                _LOGGER.debug(f"[{self.host}] Ignored during close (write): {e!r}")
+            except Exception as e:
+                _LOGGER.debug(f"[{self.host}] Unexpected error during close (write): {e!r}")
             try:
                 self._writer.close()
                 await self._writer.wait_closed()
-            except (AttributeError, OSError) as e: # OSError happens when is host unreachable
-                _LOGGER.debug(f"[{self.host}] {e!r} can be during closing ignored")
+            except (AttributeError, OSError) as e:
+                # Happens if socket is already half-broken or not properly initialized
+                _LOGGER.debug(f"[{self.host}] Ignored during close (close/wait_closed): {e!r}")
+            except Exception as e:
+                _LOGGER.debug(f"[{self.host}] Unexpected error during close (write): {e!r}")
+            finally:
+                self._writer = None
 
-            self._writer = None
+        if self._reader is not None:
+            self._reader = None
 
-        self._reader = None
+        if hasattr(self, "_keeper") and self._keeper:
+            _LOGGER.debug(f"[{self.host}] Closing connection keeper: {self._keeper.get_name()}")
+            if not self._keeper.done():
+                self._keeper.cancel()
+                try:
+                    await self._keeper
+                except asyncio.CancelledError:
+                    _LOGGER.debug(f"[{self.host}] Keeper task cancelled")
+                except Exception as e:
+                    _LOGGER.warning(f"[{self.host}] Error while cancelling keeper task: {e!r}")
+            self._keeper = None
+
+        _LOGGER.debug(f"[{self.host}] Connection closed and cleaned up.")
 
     @throttle(0.1)
     @log_call("SENT")
@@ -254,10 +342,12 @@ class Solarman:
 
         try:
             await self._write(frame)
+            read_timeout = self.timeout * 3 - 1
             while True:
                 try:
-                    return await asyncio.wait_for(self._data_queue.get(), self.timeout * 3 - 1)
+                    return await asyncio.wait_for(self._data_queue.get(), read_timeout)
                 except TimeoutError:
+                    _LOGGER.debug(f"[{self.host}] Timeout while receiving in _send_receive_frame after {read_timeout} seconds.")
                     await self._close()
         finally:
             self._data_event.clear()
@@ -324,6 +414,12 @@ class Solarman:
         async with self._semaphore:
             if self.connected:
                 self._keeper.cancel()
+                try:
+                  await self._keeper
+                except asyncio.CancelledError:
+                  _LOGGER.debug(f"[{self.host}] Keeper task cancelled")
+                except Exception as e:
+                  _LOGGER.warning(f"[{self.host}] Error while cancelling keeper task: {e!r}")
 
             self._keeper = None
 
