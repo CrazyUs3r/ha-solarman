@@ -1,6 +1,6 @@
 from re import compile
-from datetime import timedelta
 from aiohttp import BasicAuth, FormData
+from datetime import timedelta as td
 
 DOMAIN = "solarman"
 
@@ -12,8 +12,8 @@ PORT_ANY = 0
 DISCOVERY_PORT = 48899
 DISCOVERY_TIMEOUT = .5
 DISCOVERY_MESSAGE = ["WIFIKIT-214028-READ".encode(), "HF-A11ASSISTHREAD".encode()]
-DISCOVERY_INTERVAL = timedelta(minutes = 15)
-DISCOVERY_CACHE = timedelta(seconds = 10)
+DISCOVERY_INTERVAL = td(minutes = 15)
+DISCOVERY_CACHE = td(seconds = 10)
 
 COMPONENTS_DIRECTORY = "custom_components"
 
@@ -104,8 +104,8 @@ PARAM_ = { CONF_MOD: CONF_MOD, CONF_MPPT: CONF_MPPT, CONF_PHASE: "l", CONF_PACK:
 # - Configuration flow
 #
 TIMINGS_INTERVAL = 5
-TIMINGS_INTERVAL_SCALE = 1
-TIMINGS_UPDATE_INTERVAL = timedelta(seconds = TIMINGS_INTERVAL * TIMINGS_INTERVAL_SCALE)
+TIMINGS_INTERVAL_SCALE = 2
+TIMINGS_UPDATE_INTERVAL = td(seconds = TIMINGS_INTERVAL * TIMINGS_INTERVAL_SCALE)
 
 REQUEST_UPDATE_INTERVAL = UPDATE_INTERVAL
 REQUEST_MIN_SPAN = "min_span"
