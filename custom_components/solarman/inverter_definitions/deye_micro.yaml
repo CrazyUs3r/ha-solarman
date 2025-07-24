@@ -11,7 +11,7 @@ info:
   model: Microinverter
 
 default:
-  update_interval: 5
+  update_interval: 15
   digits: 6
 
 parameters:
@@ -209,50 +209,71 @@ parameters:
           - key: default
             value: Problem
 
-      - name: "Device Fault"
+      - name: "Device Fault 1"
         class: "enum"
         rule: 3
-        registers: [0x0067, 0x0068, 0x0069, 0x006A]
+        registers: [0x0067]
         icon: "mdi:message-alert-outline"
         lookup:
           - key: 0x0000
             value: "OK"
-          - bit: 0
+          - key: 0x1
             value: "DC OverVoltage"
-          - bit: 1
+          - key: 0x2
             value: "DC Bus OverVoltage"
-          - bit: 2
+          - key: 0x4
             value: "DC Bus Uneven Voltage"
-          - bit: 3
+          - key: 0x8
             value: "DC Bus UnderVoltage"
-          - bit: 4
+          - key: 0x10
             value: "DC Bus2 Uneven Voltage"
-          - bit: [2, 4]
-            value: "DC Bus & Bus2 Uneven Voltage"
-          - bit: 5
+          - key: 0x14
+            value: "???"
+          - key: 0x20
             value: "DC A path OverCurrent"
-          - bit: 6
+          - key: 0x40
             value: "DC B path OverCurrent"
-          - bit: 7
+          - key: 0x80
             value: "DC Input Disturbance"
-          - bit: 8
+          - key: 0x100
             value: "Grid OverCurrent"
-          - bit: 9
+          - key: 0x200
             value: "IGBT OverCurrent"
-          - bit: 10
+          - key: 0x400
             value: "Grid Disturbance 2"
-          - bit: 11
+          - key: 0x800
             value: "Arc Self-Test Protection"
-          - bit: 12
+          - key: 0x1000
             value: "Arc Fault Reservation"
-          - bit: 13
+          - key: 0x2000
             value: "Grid Current Sample Abnormality"
-          - bit: [16, 17, 25]
-            value: "Grid phase failure or No Relay Connection"
-          - bit: [16, 20, 23, 24]
+          - key: default
+            value: Problem
+
+      - name: "Device Fault 2"
+        class: "enum"
+        rule: 3
+        registers: [0x0068]
+        icon: "mdi:message-alert-outline"
+        lookup:
+          - key: 0x0000
+            value: "OK"
+          - key: 0x191
             value: "Grid phase failure or No Relay Connection"
           - key: default
             value: Problem
+
+      - name: "Device Debug 1"
+        class: "enum"
+        rule: 3
+        registers: [0x0069]
+        icon: "mdi:message-alert-outline"
+
+      - name: "Device Debug 2"
+        class: "enum"
+        rule: 3
+        registers: [0x006A]
+        icon: "mdi:message-alert-outline"
 
   - group: PV
     items:
@@ -767,6 +788,7 @@ parameters:
             value: "Initialize the communication board EEPROM"
 
   - group: Grid
+    update_interval: 15
     items:
       - name: "Grid Voltage"
         class: "voltage"
