@@ -41,6 +41,7 @@ PROTOCOL.PLACEHOLDER3 = bytes.fromhex("00000000") # offset time
 PROTOCOL.PLACEHOLDER4 = bytes.fromhex("000000000000000000000000") # delivery|poweron|offset time
 PROTOCOL.START = bytes.fromhex("A5")
 PROTOCOL.END = bytes.fromhex("15")
+PROTOCOL.ALT_FRAME_START = bytes.fromhex("AA")
 
 class FrameError(Exception):
     """Frame Validation Error"""
@@ -172,7 +173,7 @@ class Solarman:
                 _LOGGER.debug(f"[{self.host}] PROTOCOL_MISMATCH: {frame.hex(' ')}")
                 return False
             return True
-        elif frame.startswith(b"\xAA"):
+        elif frame.startswith(PROTOCOL.ALT_FRAME_START):
             _LOGGER.debug(f"[{self.host}] ALT_FRAME_DETECTED (AA): {frame.hex(' ')}")
             self._handle_alt_aa_frame(frame)
             return False
