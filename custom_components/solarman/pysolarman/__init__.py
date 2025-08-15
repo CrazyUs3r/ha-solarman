@@ -37,6 +37,10 @@ PROTOCOL.PLACEHOLDER3 = bytes.fromhex("00000000") # offset time
 PROTOCOL.PLACEHOLDER4 = bytes.fromhex("000000000000000000000000") # delivery|poweron|offset time
 PROTOCOL.START = bytes.fromhex("A5")
 PROTOCOL.END = bytes.fromhex("15")
+PROTOCOL.ALT_FRAME_START = bytes.fromhex("AA")
+
+class FrameError(Exception):
+    """Frame Validation Error"""
 
 def log_call(prefix: str):
     def decorator(f):
@@ -57,8 +61,6 @@ def log_return(prefix: str):
         return wrapper
     return decorator
 
-class FrameError(Exception):
-    """Frame Validation Error"""
 
 class Solarman:
     def __init__(self, host: str, port: int | str, transport: str, serial: int, slave: int, timeout: int):
@@ -76,6 +78,7 @@ class Solarman:
         self._data_queue = asyncio.Queue(maxsize = 1)
         self._data_event = Event()
         self._last_frame: bytes | None = None
+        self.relay_values = []
 
     @staticmethod
     def _get_response_code(code: int) -> int:
@@ -135,21 +138,45 @@ class Solarman:
     def _protocol_trailer(self, frame: bytes) -> bytearray:
         return bytearray(struct.pack("<B", self._calculate_checksum(frame[1:])) + PROTOCOL.END)
 
+    def _handle_alt_aa_frame(self, frame: bytes) -> None:
+        try:
+            if len(frame) < 5:
+                _LOGGER.warning(f"[{self.host}] Zu kurzer AA-Frame: {frame.hex(' ')}")
+                return
+            address = frame[1]
+            function_code = frame[2]
+            register = int.from_bytes(frame[3:5], "big")
+            data_bytes = frame[5:]
+            registers = [int.from_bytes(data_bytes[i:i+2], "big") for i in range(0, len(data_bytes), 2) if i + 2 <= len(data_bytes)]
+            self.relay_values = registers
+            _LOGGER.info(f"[{self.host}] AA-Telegramm → Device: {address}, Function: {function_code:#02x}, Start-Reg: {register:#04x}, Values: {registers}")
+        except Exception as e:
+            _LOGGER.warning(f"[{self.host}] Fehler beim Verarbeiten von AA-Frame: {e!r}")
+
     def _received_frame_is_valid(self, frame: bytes) -> bool:
-        if not frame.startswith(PROTOCOL.START):
-            _LOGGER.debug(f"[{self.host}] PROTOCOL_MISMATCH: {frame.hex(" ")}")
+        if frame.startswith(PROTOCOL.START):
+            if frame[5] != self._sequence_number:
+                if frame[4] == PROTOCOL.CONTROL_CODE.REQUEST and len(frame) > 6:
+                    f = int.from_bytes(frame[5:6], "big") == len(frame[6:])
+                    if len(frame) > 9:
+                        f &= int.from_bytes(frame[8:9], "big") == len(frame[9:])
+                    if f:
+                        _LOGGER.debug(f"[{self.host}] TCP_DETECTED: {frame.hex(' ')}")
+                        self.transport = "modbus_tcp"
+                        return True
+                _LOGGER.debug(f"[{self.host}] SEQ_MISMATCH: {frame.hex(' ')}")
+                return False
+            if not frame.endswith(PROTOCOL.END):
+                _LOGGER.debug(f"[{self.host}] PROTOCOL_MISMATCH: {frame.hex(' ')}")
+                return False
+            return True
+        elif frame.startswith(PROTOCOL.ALT_FRAME_START):
+            _LOGGER.debug(f"[{self.host}] ALT_FRAME_DETECTED (AA): {frame.hex(' ')}")
+            self._handle_alt_aa_frame(frame)
             return False
-        if frame[5] != self._sequence_number:
-            if frame[4] == PROTOCOL.CONTROL_CODE.REQUEST and len(frame) > 6 and (f := int.from_bytes(frame[5:6], "big") == len(frame[6:])) and (int.from_bytes(frame[8:9], "big") == len(frame[9:]) if len(frame) > 9 else f):
-                _LOGGER.debug(f"[{self.host}] TCP_DETECTED: %s", self.host, frame.hex(" "))
-                self.transport = "modbus_tcp"
-                return True
-            _LOGGER.debug(f"[{self.host}] SEQ_MISMATCH: {frame.hex(" ")}")
+        else:
+            _LOGGER.debug(f"[{self.host}] PROTOCOL_MISMATCH: {frame.hex(' ')}")
             return False
-        if not frame.endswith(PROTOCOL.END):
-            _LOGGER.debug(f"[{self.host}] PROTOCOL_MISMATCH: {frame.hex(" ")}")
-            return False
-        return True
 
     def _received_frame_response(self, frame: bytes) -> tuple[bool, bytearray]:
         do_continue = True
