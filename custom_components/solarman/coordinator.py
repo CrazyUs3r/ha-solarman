@@ -53,7 +53,13 @@ class Coordinator(DataUpdateCoordinator[dict[str, tuple[int | float | str | list
 
     async def _async_update_data(self):
         try:
-            return await self.device.get(self.counter)
+            await self.device.endpoint.load()
+            _LOGGER.debug(f"[Coordinator] endpoint.info nach load(): {self.device.endpoint.info}")
+            data = await self.device.get(self.counter)
+            _LOGGER.debug(f"[Coordinator] device.get() Rückgabe: {data}")
+            if not self.device.endpoint.info:
+                _LOGGER.debug("[Coordinator] endpoint.info ist leer, obwohl device.get() erfolgreich war.")
+            return data
         except TimeoutError:
             raise
         except Exception as e:
